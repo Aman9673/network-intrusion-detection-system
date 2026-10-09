@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
-from backend.geoip_service import lookup_ip
 from backend.schemas import PredictionRequest, PredictionResponse
 from backend.predictor import predict_attack
 from backend.logger import save_log
@@ -388,12 +387,12 @@ def get_threat_ips():
     return threats
 
 # ============================================================
-# GLOBAL THREAT MAP
+# THREAT MAP (GeoIP disabled)
 # ============================================================
 
 @router.get("/threat-map")
 def threat_map():
-
+    """Return threat summaries without geographic lookup or coordinates."""
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -404,7 +403,6 @@ def threat_map():
             COUNT(*) AS attack_count,
             MAX(confidence) AS max_confidence,
             MAX(timestamp) AS last_seen,
-
             (
                 SELECT attack_type
                 FROM attack_logs a2
@@ -412,85 +410,28 @@ def threat_map():
                 ORDER BY a2.id DESC
                 LIMIT 1
             ) AS attack_type
-
         FROM attack_logs
-
-        WHERE
-            LOWER(attack_type) != 'benign'
-            AND source_ip IS NOT NULL
-
+        WHERE LOWER(attack_type) != 'benign'
+          AND source_ip IS NOT NULL
         GROUP BY source_ip
-
         ORDER BY attack_count DESC
-
         LIMIT 100
         """
     )
 
     rows = cursor.fetchall()
-
     conn.close()
 
-
-    results = []
-
-
-    for row in rows:
-
-        ip = row["source_ip"]
-
-        geo = lookup_ip(ip)
-
-
-        # ----------------------------------------------------
-        # Skip IPs without geographic coordinates
-        # ----------------------------------------------------
-
-        if (
-            geo.get("latitude") is None
-            or geo.get("longitude") is None
-        ):
-            continue
-
-
-        results.append({
-
-            "ip": ip,
-
-            "country":
-                geo.get("country"),
-
-            "country_code":
-                geo.get("country_code"),
-
-            "city":
-                geo.get("city"),
-
-            "latitude":
-                geo.get("latitude"),
-
-            "longitude":
-                geo.get("longitude"),
-
-            "attack_count":
-                row["attack_count"] or 0,
-
-            "max_confidence":
-                float(
-                    row["max_confidence"] or 0
-                ),
-
-            "last_seen":
-                row["last_seen"],
-
-            "attack_type":
-                row["attack_type"]
-                or "Unknown",
-
-        })
-
-
-    return results
+    return [
+        {
+            "ip": row["source_ip"],
+            "attack_count": row["attack_count"] or 0,
+            "max_confidence": float(row["max_confidence"] or 0),
+            "last_seen": row["last_seen"],
+            "attack_type": row["attack_type"] or "Unknown",
+        }
+        for row in rows
+    ]
 
 # ============================================================
 # TRAFFIC HISTORY
